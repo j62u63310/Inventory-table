@@ -1,32 +1,32 @@
-export async function fetchData() {
-    const appID = kintone.app.getId();
-    let allRecords = [];
-    let offset = 0;
-    const limit = 500;
+export async function fetchData(appID) {
+  let allRecords = [];
+  let offset = 0;
+  const limit = 500;
 
-    try {
-      while (true) {
-        const getRecord = {
-          app: appID,
-          query: `limit ${limit} offset ${offset}`
-        }
-        const resp = await kintone.api(kintone.api.url('/k/v1/records', true), 'GET', getRecord);
-        allRecords = allRecords.concat(resp.records);
-        offset += limit;
-        if (resp.records.length < limit) {
-          break;
-        }
+  try {
+    while (true) {
+      const getRecord = {
+        app: appID,
+        query: `limit ${limit} offset ${offset}`
       }
-    } catch (err) {
-      console.error(`fetchData: ${err}`);
-      throw err;
+      const resp = await kintone.api(kintone.api.url('/k/v1/records', true), 'GET', getRecord);
+      allRecords = allRecords.concat(resp.records);
+      offset += limit;
+      if (resp.records.length < limit) {
+        break;
+      }
     }
-  
-    return allRecords;
+  } catch (err) {
+    console.error(`fetchData: ${err}`);
+    throw err;
+  }
+
+  return allRecords;
 }
 
 
 const keyMapping = {
+  "期初盤點": '期初盤點',
   "產品名稱": '產品名稱',
   "分類名稱": '分類',
   "異動單位": '單位',
@@ -42,22 +42,28 @@ const keyMapping = {
   "組合工單-親產品金額": "親產品金額",
   "組合工單-子件": "子件",
   "組合工單-子件金額": "子件金額",
+  "當月盤點": "當月盤點",
+  "盤點金額": "盤點金額",
 };
 
 export function summary(records) {
   const aggregated = {};
   const totals = {
-    amount: {},
-    quantity: {}
+    amount: {
+      '盤點金額': 0
+    },
+    quantity: {
+      '當月盤點' :0
+    }
   };
 
   records.forEach(record => {
-    const productName = record['產品名稱'].value;
-    const category = record['分類名稱'].value;
-    const unit = record['異動單位'].value;
-    const source = record['異動來源'].value;
-    const amount = Math.abs(parseFloat(record['異動金額'].value));
-    const quantity = Math.abs(parseFloat(record['異動數量'].value));
+    const productName = record['產品名稱'].value || "Unknown";
+    const category = record['分類名稱'].value || "Unknown";
+    const unit = record['單位_採出盤'].value || "Unknown";
+    const source = record['異動來源'].value || "Unknown";
+    const amount = Math.abs(parseFloat(record['異動金額'].value || 0));
+    const quantity = Math.abs(parseFloat(Number(record['採出盤數量'].value || 0)));
 
     const key = `${productName}-${category}-${unit}`;
 
@@ -72,7 +78,6 @@ export function summary(records) {
     aggregated[key][source].amount += amount;
     aggregated[key][source].quantity += quantity;
 
-    // 計算每一列的總和
     const mappedKey = keyMapping[source] || source;
     if (!totals.amount[mappedKey]) {
       totals.amount[mappedKey] = 0;
@@ -88,38 +93,54 @@ export function summary(records) {
   Object.keys(aggregated).forEach(key => {
     const [productName, category, unit] = key.split('-');
     const row = { 
-      [keyMapping["產品名稱"]]: productName, 
-      [keyMapping["分類名稱"]]: category, 
-      [keyMapping["異動單位"]]: unit 
+      '產品名稱': productName, 
+      '分類': category, 
+      '單位': unit 
     };
+
+    let 當月盤點 = 0;
+    let 盤點金額 = 0;
 
     Object.keys(aggregated[key]).forEach(source => {
       const mappedSource = keyMapping[source] || source;
       row[mappedSource] = aggregated[key][source].quantity;
       row[keyMapping[`${source}金額`] || `${source}金額`] = aggregated[key][source].amount;
+
+      當月盤點 += aggregated[key][source].quantity;
+      盤點金額 += aggregated[key][source].amount;
     });
+
+    row['當月盤點'] = 當月盤點;
+    row['盤點金額'] = 盤點金額;
+
+    // 累加到 totals 中
+    totals.quantity['當月盤點'] += 當月盤點;
+    totals.amount['盤點金額'] += 盤點金額;
 
     result.push(row);
   });
 
-  // 轉換 totals 中的 key
   const mappedTotals = {
     amount: {},
     quantity: {}
   };
+
   Object.keys(totals.amount).forEach(key => {
     const mappedKey = keyMapping[key] || key;
     mappedTotals.amount[mappedKey] = totals.amount[key];
+  });
+
+  Object.keys(totals.quantity).forEach(key => {
+    const mappedKey = keyMapping[key] || key;
     mappedTotals.quantity[mappedKey] = totals.quantity[key];
   });
 
   return { result, totals: mappedTotals };
 }
 
-
 export async function warehourse() {
   const getRecord = {
-    app: "3",
+    app: "1",
     query: ``
   }
   const resp = await kintone.api(kintone.api.url('/k/v1/records', true), 'GET', getRecord);
